@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # coding: utf-8
-# Copyright 2016 Abram Hindle, https://github.com/tywtyw2002, and https://github.com/treedust
+# Copyright 2023 Julian Gallego Franco, Abram Hindle, https://github.com/tywtyw2002, and https://github.com/treedust
 # 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,15 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Do not use urllib's HTTP GET and POST mechanisms.
-# Write your own HTTP GET and POST
-# The point is to understand what you have to send and get experience with it
-
 import sys
 import socket
 import re
 # you may use urllib to encode data appropriately
 import urllib.parse
+
+BUFFER_SIZE = 4096
 
 def help():
     print("httpclient.py [GET/POST] [URL]\n")
@@ -31,23 +29,27 @@ class HTTPResponse(object):
     def __init__(self, code=200, body=""):
         self.code = code
         self.body = body
+    
+    def printSelf(self):
+        print(self.code)
+        print(self.body)
 
 class HTTPClient(object):
-    #def get_host_port(self,url):
-
     def connect(self, host, port):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.settimeout(10)
         self.socket.connect((host, port))
-        return None
 
-    def get_code(self, data):
-        return None
+    def getCode(self, data):
+        return int(data.split()[1])
 
-    def get_headers(self,data):
-        return None
+    def getHeaders(self, data):
+        headers, _ = data.split('\r\n\r\n', 1)
+        return headers
 
-    def get_body(self, data):
-        return None
+    def getBody(self, data):
+        _, body = data.split('\r\n\r\n', 1)
+        return body
     
     def sendall(self, data):
         self.socket.sendall(data.encode('utf-8'))
@@ -55,7 +57,6 @@ class HTTPClient(object):
     def close(self):
         self.socket.close()
 
-    # read everything from the socket
     def recvall(self, sock):
         buffer = bytearray()
         done = False
@@ -68,20 +69,74 @@ class HTTPClient(object):
         return buffer.decode('utf-8')
 
     def GET(self, url, args=None):
-        code = 500
-        body = ""
-        return HTTPResponse(code, body)
+        try:
+            parsedUrl = urllib.parse.urlparse(url)
+            host = parsedUrl.hostname
+            port = parsedUrl.port if parsedUrl.port else 80
+            path = parsedUrl.path if parsedUrl.path else '/'
+
+            if args:
+                path += '?' + urllib.parse.urlencode(args)
+
+            req = f"GET {path} HTTP/1.1\r\n"
+            req += f"Host: {host}\r\n"
+            req += "Connection: close\r\n\r\n"
+
+            self.connect(host, port)
+            self.sendall(req)
+
+            res = self.recvall(self.socket)
+            self.close()
+
+            code = self.getCode(res)
+            body = self.getBody(res)
+
+            return HTTPResponse(code, body)
+        
+        except ConnectionRefusedError:
+            return HTTPResponse(503, "Service Unavailable")
 
     def POST(self, url, args=None):
-        code = 500
-        body = ""
-        return HTTPResponse(code, body)
+        try:
+            parsedUrl = urllib.parse.urlparse(url)
+            host = parsedUrl.hostname
+            port = parsedUrl.port if parsedUrl.port else 80
+            path = parsedUrl.path if parsedUrl.path else '/'
+
+            if args:
+                body = urllib.parse.urlencode(args)
+                contentLength = len(body)
+            else:
+                body = ""
+                contentLength = 0
+
+            req = f"POST {path} HTTP/1.1\r\n"
+            req += f"Host: {host}\r\n"
+            req += f"Content-Type: application/x-www-form-urlencoded\r\n"
+            req += f"Content-Length: {contentLength}\r\n"
+            req += "Connection: close\r\n\r\n"
+            req += body
+
+            self.connect(host, port)
+            self.sendall(req)
+
+            res = self.recvall(self.socket)
+            self.close()
+
+            code = self.getCode(res)
+            body = self.getBody(res)
+
+            return HTTPResponse(code, body)
+        
+        except ConnectionRefusedError:
+            return HTTPResponse(503, "Service Unavailable")
 
     def command(self, url, command="GET", args=None):
         if (command == "POST"):
-            return self.POST( url, args )
+            self.POST( url, args ).printSelf()
         else:
-            return self.GET( url, args )
+            self.GET( url, args ).printSelf()
+    
     
 if __name__ == "__main__":
     client = HTTPClient()
@@ -90,6 +145,6 @@ if __name__ == "__main__":
         help()
         sys.exit(1)
     elif (len(sys.argv) == 3):
-        print(client.command( sys.argv[2], sys.argv[1] ))
+        client.command( sys.argv[2], sys.argv[1] )
     else:
-        print(client.command( sys.argv[1] ))
+        client.command( sys.argv[1] )
